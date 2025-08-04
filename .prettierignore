@@ -1,0 +1,14 @@
+node_modules/
+dist/
+build/
+artifacts/
+cache/
+typechain-types/
+*.log
+*.lock
+package-lock.json
+yarn.lock
+.env
+.env.local
+.env.production
+.env.test

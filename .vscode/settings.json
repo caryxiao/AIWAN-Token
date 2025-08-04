@@ -1,0 +1,15 @@
+{
+  "editor.formatOnSave": true,
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.validate": ["javascript", "typescript", "solidity"],
+  "files.associations": {
+    "*.sol": "solidity"
+  },
+  "solidity.defaultCompiler": "remote",
+  "solidity.compileUsingRemoteVersion": "latest",
+  "typescript.preferences.importModuleSpecifier": "relative",
+  "typescript.suggest.autoImports": true
+}
