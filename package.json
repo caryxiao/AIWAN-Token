@@ -23,6 +23,8 @@
     "@types/node": "^24.1.0",
     "@typescript-eslint/eslint-plugin": "^8.38.0",
     "@typescript-eslint/parser": "^8.38.0",
+    "@uniswap/v3-core": "^1.0.1",
+    "@uniswap/v3-periphery": "^1.4.4",
     "dotenv": "^17.2.1",
     "eslint": "^9.32.0",
     "eslint-config-prettier": "^10.1.8",
