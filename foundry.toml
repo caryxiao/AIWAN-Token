@@ -4,12 +4,27 @@ src = "contracts"
 out = "out"
 libs = ["dependencies", "lib"]
 auto_detect_remappings = false
+ffi = true
+ast = true
+build_info = true
+extra_output = ["storageLayout"]
+via_ir = false
+optimizer = true
+optimizer_runs = 200
+
+[rpc_endpoints]
+sepolia = "${SEPOLIA_RPC_URL}"
+mainnet = "${MAINNET_RPC_URL}"
+
+[etherscan]
+mainnet = { key = "${ETHERSCAN_API_KEY}" }
+sepolia = { key = "${ETHERSCAN_API_KEY}" }
 
 [soldeer]
 remappings_generate = true       # 自动写入 remappings
-remappings_regenerate = true     # 安装/更新时重写 remappings
+remappings_regenerate = false     # 安装/更新时重写 remappings
 remappings_version = true       # remapping 包含版本后缀
-remappings_prefix = "@"          # remappings 前缀
+remappings_prefix = ""          # remappings 前缀
 remappings_location = "txt"      # 或 "config"
 
 [dependencies]
@@ -18,3 +33,4 @@ remappings_location = "txt"      # 或 "config"
 "@uniswap-v3-core" = "1.0.2-solc-0.8-simulate"
 "@openzeppelin-contracts-upgradeable" = "5.4.0"
 forge-std = "1.10.0"
+openzeppelin-foundry-upgrades = "0.4.0"

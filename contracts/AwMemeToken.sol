@@ -240,46 +240,51 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         int24 _tickLower,
         int24 _tickUpper
     ) internal virtual {
-        if (uniswapPool == address(0)) revert InvalidAddress(uniswapPool);
-        if (_amountTokenDesired == 0 && _amountETHDesired == 0) revert InvalidAmount(0);
+        _checkAddLiquidity(_amountTokenDesired, _amountETHDesired, _tickLower, _tickUpper);
 
-        // 验证tick是否与池子的tickSpacing对齐
-        int24 tickSpacing = IUniswapV3Pool(uniswapPool).tickSpacing();
-        if (_tickLower % tickSpacing != 0) revert InvalidTick(_tickLower);
-        if (_tickUpper % tickSpacing != 0) revert InvalidTick(_tickUpper);
-        if (_tickLower >= _tickUpper) revert InvalidTickRange(_tickLower, _tickUpper);
+        // 创建流动性
+        (uint256 tokenId, uint256 liquidity, uint256 amount0, uint256 amount1) = _createLiquidityPosition(
+            _recipient,
+            _amountTokenDesired,
+            _amountETHDesired,
+            _tickLower,
+            _tickUpper
+        );
 
-        // weth地址获取
-        address wethAddress = IPeripheryImmutableState(address(uniswapRouter)).WETH9();
+        // 退款和事件
+        _handleLiquidityResult(
+            _recipient,
+            tokenId,
+            liquidity,
+            amount0,
+            amount1,
+            _amountTokenDesired,
+            _amountETHDesired,
+            _tickLower,
+            _tickUpper
+        );
+    }
 
-        // 授权非同质化代币管理器花费代币
-        if (_amountTokenDesired > 0) {
-            IERC20(address(this)).approve(address(nonfungiblePositionManager), _amountTokenDesired);
-        }
-
-        // 将ETH转换为WETH并授权非同质化代币管理器花费WETH
-        if (_amountETHDesired > 0) {
-            // 将ETH转换为WETH
-            MemeLib.wrapETH(_amountETHDesired, wethAddress);
-            IERC20(wethAddress).approve(address(nonfungiblePositionManager), _amountETHDesired);
-        }
-
+    /**
+     * @dev 创建流动性头寸
+     */
+    function _createLiquidityPosition(
+        address _recipient,
+        uint256 _amountTokenDesired,
+        uint256 _amountETHDesired,
+        int24 _tickLower,
+        int24 _tickUpper
+    ) internal virtual returns (uint256 tokenId, uint256 liquidity, uint256 amount0, uint256 amount1) {
         // 获取代币0和代币1
         address token0 = IUniswapV3Pool(uniswapPool).token0();
         address token1 = IUniswapV3Pool(uniswapPool).token1();
-        // 获取代币0和代币1的数量
-        uint256 amount0Desired;
-        uint256 amount1Desired;
 
-        // 如果代币是token0，则amount0Desired为代币数量，amount1Desired为ETH数量
-        // 如果代币是token1，则amount0Desired为ETH数量，amount1Desired为代币数量
-        if (address(this) == token0) {
-            amount0Desired = _amountTokenDesired;
-            amount1Desired = _amountETHDesired;
-        } else {
-            amount0Desired = _amountETHDesired;
-            amount1Desired = _amountTokenDesired;
-        }
+        // 计算代币数量
+        (uint256 amount0Desired, uint256 amount1Desired) = _calculateTokenAmounts(
+            token0,
+            _amountTokenDesired,
+            _amountETHDesired
+        );
 
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
@@ -291,38 +296,52 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             amount1Desired: amount1Desired,
             amount0Min: 0,
             amount1Min: 0,
-            recipient: _recipient, // 代币持有者是添加流动性的用户
+            recipient: _recipient,
             deadline: block.timestamp + 30 minutes
         });
 
-        (uint256 tokenId, uint256 liquidity, uint256 amount0, uint256 amount1) = nonfungiblePositionManager.mint(
-            params
-        );
+        (tokenId, liquidity, amount0, amount1) = nonfungiblePositionManager.mint(params);
 
         if (tokenId == 0) revert InvalidTokenId(tokenId);
         if (liquidity == 0) revert InvalidLiquidity(0);
+    }
 
-        // 退还未使用的代币
-        if (_amountTokenDesired > 0) {
-            uint256 amountTokenActual = (address(this) == token0) ? amount0 : amount1;
-            if (amountTokenActual < _amountTokenDesired) {
-                IERC20(address(this)).transfer(_recipient, _amountTokenDesired - amountTokenActual);
-            }
+    /**
+     * @dev 计算代币数量
+     */
+    function _calculateTokenAmounts(
+        address token0,
+        uint256 _amountTokenDesired,
+        uint256 _amountETHDesired
+    ) internal view returns (uint256 amount0Desired, uint256 amount1Desired) {
+        if (address(this) == token0) {
+            amount0Desired = _amountTokenDesired;
+            amount1Desired = _amountETHDesired;
+        } else {
+            amount0Desired = _amountETHDesired;
+            amount1Desired = _amountTokenDesired;
         }
+    }
 
-        // 退还未使用的ETH
-        if (_amountETHDesired > 0) {
-            uint256 amountETHActual = (address(this) == token0) ? amount1 : amount0;
-            if (amountETHActual < _amountETHDesired) {
-                // 将WETH转换为ETH
-                MemeLib.unwrapWETH(_amountETHDesired - amountETHActual, wethAddress);
-            }
-        }
+    /**
+     * @dev 处理流动性结果
+     */
+    function _handleLiquidityResult(
+        address _recipient,
+        uint256 tokenId,
+        uint256 liquidity,
+        uint256 amount0,
+        uint256 amount1,
+        uint256 _amountTokenDesired,
+        uint256 _amountETHDesired,
+        int24 _tickLower,
+        int24 _tickUpper
+    ) internal virtual {
+        // 获取代币地址用于退款
+        address token0 = IUniswapV3Pool(uniswapPool).token0();
+        address token1 = IUniswapV3Pool(uniswapPool).token1();
 
-        // 将剩余的ETH余额转回接收者
-        if (address(this).balance > 0) {
-            payable(_recipient).transfer(address(this).balance);
-        }
+        _refundNonUsedToken(_recipient, token0, token1, amount0, amount1, _amountTokenDesired, _amountETHDesired);
 
         // 添加流动性事件
         emit AddLiquidity(
@@ -334,6 +353,69 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             tokenId,
             liquidity
         );
+    }
+
+    function _checkAddLiquidity(
+        uint256 _amountTokenDesired,
+        uint256 _amountETHDesired,
+        int24 _tickLower,
+        int24 _tickUpper
+    ) internal virtual {
+        if (uniswapPool == address(0)) revert InvalidAddress(uniswapPool);
+        if (_amountTokenDesired == 0 && _amountETHDesired == 0) revert InvalidAmount(0);
+
+        // 验证tick是否与池子的tickSpacing对齐
+        int24 tickSpacing = IUniswapV3Pool(uniswapPool).tickSpacing();
+        if (_tickLower % tickSpacing != 0) revert InvalidTick(_tickLower);
+        if (_tickUpper % tickSpacing != 0) revert InvalidTick(_tickUpper);
+        if (_tickLower >= _tickUpper) revert InvalidTickRange(_tickLower, _tickUpper);
+
+        // 授权非同质化代币管理器花费代币
+        if (_amountTokenDesired > 0) {
+            IERC20(address(this)).approve(address(nonfungiblePositionManager), _amountTokenDesired);
+        }
+
+        // 将ETH转换为WETH并授权非同质化代币管理器花费WETH
+        if (_amountETHDesired > 0) {
+            // 获取WETH地址
+            address wethAddress = IPeripheryImmutableState(address(uniswapRouter)).WETH9();
+            // 将ETH转换为WETH
+            MemeLib.wrapETH(_amountETHDesired, wethAddress);
+            IERC20(wethAddress).approve(address(nonfungiblePositionManager), _amountETHDesired);
+        }
+    }
+
+    function _refundNonUsedToken(
+        address _recipient,
+        address _token0,
+        address _token1,
+        uint256 _amount0,
+        uint256 _amount1,
+        uint256 _amountTokenDesired,
+        uint256 _amountETHDesired
+    ) internal virtual {
+        // 退还未使用的代币
+        if (_amountTokenDesired > 0) {
+            uint256 amountTokenActual = (address(this) == _token0) ? _amount0 : _amount1;
+            if (amountTokenActual < _amountTokenDesired) {
+                IERC20(address(this)).transfer(_recipient, _amountTokenDesired - amountTokenActual);
+            }
+        }
+
+        // 退还未使用的ETH
+        if (_amountETHDesired > 0) {
+            uint256 amountETHActual = (address(this) == _token0) ? _amount1 : _amount0;
+            address wethAddress = (address(this) == _token0) ? _token1 : _token0;
+            if (amountETHActual < _amountETHDesired) {
+                // 将WETH转换为ETH
+                MemeLib.unwrapWETH(_amountETHDesired - amountETHActual, wethAddress);
+            }
+        }
+
+        // 将剩余的ETH余额转回接收者
+        if (address(this).balance > 0) {
+            payable(_recipient).transfer(address(this).balance);
+        }
     }
 
     /**
