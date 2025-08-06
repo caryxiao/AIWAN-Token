@@ -1,5 +1,6 @@
 import '@nomicfoundation/hardhat-toolbox';
 import '@openzeppelin/hardhat-upgrades';
+import '@nomicfoundation/hardhat-foundry';
 import 'hardhat-deploy';
 import { HardhatUserConfig } from 'hardhat/config';
 import * as fs from 'fs';
@@ -18,7 +19,21 @@ const { SEPOLIA_RPC_URL, PRIVATE_KEY, ETHERSCAN_API_KEY } = process.env;
 console.log('当前环境:', process.env.NODE_ENV || 'development');
 
 const config: HardhatUserConfig = {
-  solidity: '0.8.28',
+  solidity: {
+      version: "0.8.28",
+      settings: {
+          viaIR: true,
+          optimizer: {
+              enabled: true,
+              runs: 200,
+              details: {
+                  yulDetails: {
+                      optimizerSteps: "u"
+                  }
+              },
+          },
+      },
+  },
   networks: {
     // 本地开发网络
     hardhat: {

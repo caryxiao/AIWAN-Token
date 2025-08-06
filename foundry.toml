@@ -1,0 +1,20 @@
+[profile.default]
+auto_detect_solc = true
+src = "contracts"
+out = "out"
+libs = ["dependencies", "lib"]
+auto_detect_remappings = false
+
+[soldeer]
+remappings_generate = true       # 自动写入 remappings
+remappings_regenerate = true     # 安装/更新时重写 remappings
+remappings_version = true       # remapping 包含版本后缀
+remappings_prefix = "@"          # remappings 前缀
+remappings_location = "txt"      # 或 "config"
+
+[dependencies]
+"@openzeppelin-contracts" = "5.4.0"
+"@uniswap-v3-periphery" = "1.4.4"
+"@uniswap-v3-core" = "1.0.2-solc-0.8-simulate"
+"@openzeppelin-contracts-upgradeable" = "5.4.0"
+forge-std = "1.10.0"
