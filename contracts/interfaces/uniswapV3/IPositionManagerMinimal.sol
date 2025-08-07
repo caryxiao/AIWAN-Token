@@ -34,6 +34,10 @@ interface IPositionManagerMinimal {
 
     // 你代码里用到了 ownerOf（来自 ERC721），也在这里声明一份，避免引入 0.7 的 IERC721
     function ownerOf(uint256 tokenId) external view returns (address);
+    
+    // ERC721 批准函数
+    function setApprovalForAll(address operator, bool approved) external;
+    function approve(address to, uint256 tokenId) external;
 
     function mint(MintParams calldata params)
     external

@@ -2,15 +2,21 @@
 auto_detect_solc = true
 src = "contracts"
 out = "out"
+test = "tests"
 libs = ["dependencies", "lib"]
 auto_detect_remappings = false
 ffi = true
 ast = true
 build_info = true
 extra_output = ["storageLayout"]
-via_ir = false
+via_ir = true
 optimizer = true
 optimizer_runs = 200
+
+[profile.test]
+ffi = true
+ast = true
+build_info = false
 
 [rpc_endpoints]
 sepolia = "${SEPOLIA_RPC_URL}"

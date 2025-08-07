@@ -10,7 +10,6 @@ contract DeployAwMemeToken is Script {
     address constant UNISWAP_V3_FACTORY = 0x1F98431c8aD98523631AE4a59f267346ea31F984;
     address constant UNISWAP_V3_ROUTER = 0xE592427A0AEce92De3Edee1F18E0157C05861564;
     address constant UNISWAP_V3_NONFUNGIBLE_POSITION_MANAGER = 0xC36442b4a4522E871399CD717aBDD847Ab11FE88;
-    address constant WETH = 0xC02aaA39b223FE8D0A0e5C4F27eAD9083C756Cc2;
     uint256 constant POOL_FEE = 3000; // 0.3%
 
     function run() public {
@@ -19,7 +18,7 @@ contract DeployAwMemeToken is Script {
         vm.startBroadcast(deployerPrivateKey);
 
         // Deploy AwMemeToken
-        AwMemeToken awMemeToken = AwMemeToken(
+        AwMemeToken awMemeToken = AwMemeToken(payable(
             Upgrades.deployUUPSProxy(
                 "AwMemeToken.sol:AwMemeToken",
                 abi.encodeCall(
@@ -34,7 +33,7 @@ contract DeployAwMemeToken is Script {
                     )
                 )
             )
-        );
+        ));
 
         int24 tick = 69315;
         uint160 sqrtPriceX96 = TickMath.getSqrtRatioAtTick(tick);

@@ -12,6 +12,7 @@ import {IPositionManagerMinimal as INonfungiblePositionManager} from "./interfac
 import {IPeripheryImmutableState} from "@uniswap/v3-periphery/contracts/interfaces/IPeripheryImmutableState.sol";
 import {IUniswapV3Pool} from "@uniswap/v3-core/contracts/interfaces/IUniswapV3Pool.sol";
 import {MemeLib} from "./MemeLib.sol";
+import {console} from "forge-std/console.sol";
 
 contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, OwnableUpgradeable {
     uint256 public constant MAX_SUPPLY = 1_000_000_000; // 总发行量， 总计10亿
@@ -42,10 +43,7 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
     error InvalidLiquidity(uint256 _liquidity); // 无效的流动性
     error InvalidAmount(uint256 _amount); // 无效的金额
     error InvalidRangePct(uint256 _rangePct); // 无效的范围百分比
-    error InvalidTick(int24 _tick); // 无效的tick
-    error InvalidTickLower(int24 _tickLower); // 无效的tickLower
-    error InvalidTickUpper(int24 _tickUpper); // 无效的tickUpper
-    error InvalidTickRange(int24 _tickLower, int24 _tickUpper); // 无效的tick范围
+    error InvalidTick(int24 _tickLower, int24 _tickUpper); // 无效的tick
     error InvalidDeadline(uint256 _deadline); // 无效的deadline
     error InsufficientBalance(address _user, uint256 _amount); // 余额不足
     error PoolAddressExists(); // 池子地址已存在
@@ -192,26 +190,16 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         dailyTxAmount[_user] += _amount; // 增加每日转账金额
     }
 
-    /**
-     * @dev 转账
-     * @param from 发送者
-     * @param to 接收者
-     * @param amount 转账金额
-     */
-    function _update(address from, address to, uint256 amount) internal virtual override {
-        _checkTxLimit(from, amount); // 检查转账限制
-
-        // 只有流动性池子交易的时候收取手续费，其他情况不收取手续费
-        if (from == uniswapPool || to == uniswapPool) {
-            uint256 txFeeAmount = (amount * txFeeRate) / 10000;
-            uint256 finalTransferAmount = amount - txFeeAmount;
-            if (txFeeAmount > 0) {
-                super._update(from, taxWallet, txFeeAmount); // 转账手续费
-            }
-            super._update(from, to, finalTransferAmount); // 转账
-        } else {
-            super._update(from, to, amount); // 转账
+    function _chargeTxFeeFromContract(
+        uint256 _amount
+    ) internal virtual returns (uint256 finalTransferAmount, uint256 txFeeAmount) {
+        // 如果手续费率为0, 则不收取
+        if (txFeeRate == 0) {
+            return (_amount, 0);
         }
+        txFeeAmount = (_amount * txFeeRate) / 10000;
+        finalTransferAmount = _amount - txFeeAmount;
+        super._update(address(this), taxWallet, txFeeAmount); // 从合约转账手续费到taxWallet
     }
 
     /**
@@ -226,8 +214,18 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             IERC20(address(this)).transferFrom(msg.sender, address(this), _amountTokenDesired);
         }
 
-        // 添加流动性
-        _addLiquidity(msg.sender, _amountTokenDesired, msg.value, _tickLower, _tickUpper);
+        // 计算预估手续费（基于期望的代币数量）- 仅用于预留，不实际收取
+        uint256 estimatedFee = 0;
+        if (txFeeRate > 0 && _amountTokenDesired > 0) {
+            estimatedFee = (_amountTokenDesired * txFeeRate) / 10000;
+        }
+
+        // 用于流动性的实际代币数量
+        uint256 actualTokenAmount = _amountTokenDesired - estimatedFee;
+        require(actualTokenAmount > 0, "Insufficient tokens after fee");
+
+        // 添加流动性 - 使用扣除手续费后的代币数量
+        _addLiquidity(msg.sender, actualTokenAmount, msg.value, _tickLower, _tickUpper, estimatedFee);
     }
 
     /**
@@ -238,7 +236,8 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         uint256 _amountTokenDesired,
         uint256 _amountETHDesired,
         int24 _tickLower,
-        int24 _tickUpper
+        int24 _tickUpper,
+        uint256 _estimatedFee
     ) internal virtual {
         _checkAddLiquidity(_amountTokenDesired, _amountETHDesired, _tickLower, _tickUpper);
 
@@ -261,7 +260,8 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             _amountTokenDesired,
             _amountETHDesired,
             _tickLower,
-            _tickUpper
+            _tickUpper,
+            _estimatedFee
         );
     }
 
@@ -286,6 +286,10 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             _amountETHDesired
         );
 
+        // 计算最小数量（设置为0以避免滑点问题）
+        uint256 amount0Min = 0;
+        uint256 amount1Min = 0;
+
         INonfungiblePositionManager.MintParams memory params = INonfungiblePositionManager.MintParams({
             token0: token0,
             token1: token1,
@@ -294,8 +298,8 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             tickUpper: _tickUpper,
             amount0Desired: amount0Desired,
             amount1Desired: amount1Desired,
-            amount0Min: 0,
-            amount1Min: 0,
+            amount0Min: amount0Min,
+            amount1Min: amount1Min,
             recipient: _recipient,
             deadline: block.timestamp + 30 minutes
         });
@@ -335,13 +339,26 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         uint256 _amountTokenDesired,
         uint256 _amountETHDesired,
         int24 _tickLower,
-        int24 _tickUpper
+        int24 _tickUpper,
+        uint256 _estimatedFee
     ) internal virtual {
-        // 获取代币地址用于退款
+        // 获取代币地址
         address token0 = IUniswapV3Pool(uniswapPool).token0();
         address token1 = IUniswapV3Pool(uniswapPool).token1();
 
-        _refundNonUsedToken(_recipient, token0, token1, amount0, amount1, _amountTokenDesired, _amountETHDesired);
+        // 手续费已经在addLiquidity函数中预先处理，这里不再重复收取
+
+        // 退款未使用的代币
+        _refundNonUsedToken(
+            _recipient,
+            token0,
+            token1,
+            amount0,
+            amount1,
+            _amountTokenDesired,
+            _amountETHDesired,
+            _estimatedFee
+        );
 
         // 添加流动性事件
         emit AddLiquidity(
@@ -366,9 +383,8 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
 
         // 验证tick是否与池子的tickSpacing对齐
         int24 tickSpacing = IUniswapV3Pool(uniswapPool).tickSpacing();
-        if (_tickLower % tickSpacing != 0) revert InvalidTick(_tickLower);
-        if (_tickUpper % tickSpacing != 0) revert InvalidTick(_tickUpper);
-        if (_tickLower >= _tickUpper) revert InvalidTickRange(_tickLower, _tickUpper);
+        if (_tickLower % tickSpacing != 0 || _tickUpper % tickSpacing != 0 || _tickLower >= _tickUpper)
+            revert InvalidTick(_tickLower, _tickUpper);
 
         // 授权非同质化代币管理器花费代币
         if (_amountTokenDesired > 0) {
@@ -392,13 +408,32 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         uint256 _amount0,
         uint256 _amount1,
         uint256 _amountTokenDesired,
-        uint256 _amountETHDesired
+        uint256 _amountETHDesired,
+        uint256 _estimatedFee
     ) internal virtual {
         // 退还未使用的代币
         if (_amountTokenDesired > 0) {
+            // 计算实际收到的代币数量
             uint256 amountTokenActual = (address(this) == _token0) ? _amount0 : _amount1;
-            if (amountTokenActual < _amountTokenDesired) {
-                IERC20(address(this)).transfer(_recipient, _amountTokenDesired - amountTokenActual);
+
+            // 基于实际使用的代币数量计算并收取手续费
+            uint256 actualFeeAmount = 0;
+            if (amountTokenActual > 0 && txFeeRate > 0) {
+                actualFeeAmount = (amountTokenActual * txFeeRate) / 10000;
+                // 收取实际手续费
+                _transfer(address(this), taxWallet, actualFeeAmount);
+            }
+
+            // 计算未使用的代币数量：用户流动性的总token + 根据总额预估的最大手续费额度 - 实际使用 - 实际手续费
+            uint256 unusedTokens = _amountTokenDesired + _estimatedFee - amountTokenActual - actualFeeAmount;
+
+            if (unusedTokens > 0) {
+                // 检查合约是否有足够的余额进行退款
+                uint256 contractBalance = balanceOf(address(this));
+                if (contractBalance >= unusedTokens) {
+                    // 从合约余额中退还给用户
+                    _transfer(address(this), _recipient, unusedTokens);
+                }
             }
         }
 
@@ -406,9 +441,12 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
         if (_amountETHDesired > 0) {
             uint256 amountETHActual = (address(this) == _token0) ? _amount1 : _amount0;
             address wethAddress = (address(this) == _token0) ? _token1 : _token0;
+
             if (amountETHActual < _amountETHDesired) {
                 // 将WETH转换为ETH
-                MemeLib.unwrapWETH(_amountETHDesired - amountETHActual, wethAddress);
+                uint256 refundETH = _amountETHDesired - amountETHActual;
+
+                MemeLib.unwrapWETH(refundETH, wethAddress);
             }
         }
 
@@ -444,15 +482,40 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
             })
         );
 
-        // 收集代币
+        // 收集代币到合约地址，以便处理WETH转换
         (uint256 amount0, uint256 amount1) = nonfungiblePositionManager.collect(
             INonfungiblePositionManager.CollectParams({
                 tokenId: _tokenId,
-                recipient: _recipient,
+                recipient: address(this),
                 amount0Max: type(uint128).max,
                 amount1Max: type(uint128).max
             })
         );
+
+        // 获取代币地址
+        address token0 = IUniswapV3Pool(uniswapPool).token0();
+        address token1 = IUniswapV3Pool(uniswapPool).token1();
+        address wethAddress = IPeripheryImmutableState(address(uniswapRouter)).WETH9();
+
+        // 处理token0
+        if (token0 == wethAddress && amount0 > 0) {
+            // 如果token0是WETH，转换为ETH并发送给用户
+            MemeLib.unwrapWETH(amount0, wethAddress);
+            payable(_recipient).transfer(amount0);
+        } else if (amount0 > 0) {
+            // 如果token0是其他代币，直接转移给用户
+            IERC20(token0).transfer(_recipient, amount0);
+        }
+
+        // 处理token1
+        if (token1 == wethAddress && amount1 > 0) {
+            // 如果token1是WETH，转换为ETH并发送给用户
+            MemeLib.unwrapWETH(amount1, wethAddress);
+            payable(_recipient).transfer(amount1);
+        } else if (amount1 > 0) {
+            // 如果token1是其他代币，直接转移给用户
+            IERC20(token1).transfer(_recipient, amount1);
+        }
 
         // 移除流动性事件
         emit RemoveLiquidity(_recipient, _tokenId, _liquidity, amount0, amount1);
@@ -464,5 +527,48 @@ contract AwMemeToken is Initializable, ERC20Upgradeable, UUPSUpgradeable, Ownabl
      */
     function _authorizeUpgrade(address newImplementation) internal view override onlyOwner {
         if (newImplementation == address(0)) revert InvalidAddress(newImplementation);
+    }
+
+    /**
+     * @dev Uniswap V3 铸币回调函数
+     * @param amount0Owed 需要支付给池子的 token0 数量
+     * @param amount1Owed 需要支付给池子的 token1 数量
+     */
+    function uniswapV3MintCallback(uint256 amount0Owed, uint256 amount1Owed, bytes calldata /* data */) external {
+        // 验证调用者是否是我们的池子
+        require(msg.sender == uniswapPool, "Invalid caller");
+
+        // 获取代币地址
+        address token0 = IUniswapV3Pool(uniswapPool).token0();
+        address token1 = IUniswapV3Pool(uniswapPool).token1();
+
+        // 支付 token0 - 直接从合约转移
+        if (amount0Owed > 0) {
+            if (token0 == address(this)) {
+                // 如果是本合约代币，使用内部转移
+                _transfer(address(this), msg.sender, amount0Owed);
+            } else {
+                // 如果是其他代币（如WETH），使用标准转移
+                IERC20(token0).transfer(msg.sender, amount0Owed);
+            }
+        }
+
+        // 支付 token1 - 直接从合约转移
+        if (amount1Owed > 0) {
+            if (token1 == address(this)) {
+                // 如果是本合约代币，使用内部转移
+                _transfer(address(this), msg.sender, amount1Owed);
+            } else {
+                // 如果是其他代币（如WETH），使用标准转移
+                IERC20(token1).transfer(msg.sender, amount1Owed);
+            }
+        }
+    }
+
+    /**
+     * @dev 接收ETH的函数，用于WETH unwrap操作
+     */
+    receive() external payable {
+        // 允许合约接收ETH，主要用于WETH unwrap
     }
 }
